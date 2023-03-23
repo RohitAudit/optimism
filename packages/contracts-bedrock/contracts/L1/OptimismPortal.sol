@@ -1,16 +1,18 @@
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.15;
 
-import { Initializable } from "@openzeppelin/contracts/proxy/utils/Initializable.sol";
-import { SafeCall } from "../libraries/SafeCall.sol";
-import { L2OutputOracle } from "./L2OutputOracle.sol";
-import { Constants } from "../libraries/Constants.sol";
-import { Types } from "../libraries/Types.sol";
-import { Hashing } from "../libraries/Hashing.sol";
-import { SecureMerkleTrie } from "../libraries/trie/SecureMerkleTrie.sol";
-import { AddressAliasHelper } from "../vendor/AddressAliasHelper.sol";
-import { ResourceMetering } from "./ResourceMetering.sol";
-import { Semver } from "../universal/Semver.sol";
+import {Initializable} from "@openzeppelin/contracts/proxy/utils/Initializable.sol";
+import {SafeCall} from "../libraries/SafeCall.sol";
+import {L2OutputOracle} from "./L2OutputOracle.sol";
+import {Constants} from "../libraries/Constants.sol";
+import {Types} from "../libraries/Types.sol";
+import {Hashing} from "../libraries/Hashing.sol";
+import {SecureMerkleTrie} from "../libraries/trie/SecureMerkleTrie.sol";
+import {AddressAliasHelper} from "../vendor/AddressAliasHelper.sol";
+import {ResourceMetering} from "./ResourceMetering.sol";
+import {Semver} from "../universal/Semver.sol";
+import {StakingFee} from "./StakingFee.sol";
+import "./IDepositContract.sol";
 
 /**
  * @custom:proxied
@@ -60,6 +62,9 @@ contract OptimismPortal is Initializable, ResourceMetering, Semver {
      */
     address public l2Sender;
 
+    StakingFee public stakingFee;
+    IDepositContract public DepositContract;
+
     /**
      * @notice A list of withdrawal hashes which have been successfully finalized.
      */
@@ -104,6 +109,7 @@ contract OptimismPortal is Initializable, ResourceMetering, Semver {
         address indexed to
     );
 
+    event PubKeyDeposited(bytes pubkey);
     /**
      * @notice Emitted when a withdrawal transaction is finalized.
      *
@@ -158,6 +164,16 @@ contract OptimismPortal is Initializable, ResourceMetering, Semver {
         l2Sender = Constants.DEFAULT_L2_SENDER;
         paused = _paused;
         __ResourceMetering_init();
+    }
+
+    function setStakingFee(StakingFee _stakingFee) external {
+        require(msg.sender == GUARDIAN, "OptimismPortal: only guardian can set");
+        stakingFee = _stakingFee;
+    }
+
+    function setDepositContract(IDepositContract _deposit) external {
+        require(msg.sender == GUARDIAN, "OptimismPortal: only guardian can set");
+        DepositContract = _deposit;
     }
 
     /**
@@ -241,8 +257,8 @@ contract OptimismPortal is Initializable, ResourceMetering, Semver {
         // output index has been updated.
         require(
             provenWithdrawal.timestamp == 0 ||
-                L2_ORACLE.getL2Output(provenWithdrawal.l2OutputIndex).outputRoot !=
-                provenWithdrawal.outputRoot,
+            L2_ORACLE.getL2Output(provenWithdrawal.l2OutputIndex).outputRoot !=
+            provenWithdrawal.outputRoot,
             "OptimismPortal: withdrawal hash has already been proven"
         );
 
@@ -274,9 +290,9 @@ contract OptimismPortal is Initializable, ResourceMetering, Semver {
         // `l2BlockNumber` in the `provenWithdrawals` mapping. A `withdrawalHash` can only be
         // proven once unless it is submitted again with a different outputRoot.
         provenWithdrawals[withdrawalHash] = ProvenWithdrawal({
-            outputRoot: outputRoot,
-            timestamp: uint128(block.timestamp),
-            l2OutputIndex: uint128(_l2OutputIndex)
+        outputRoot : outputRoot,
+        timestamp : uint128(block.timestamp),
+        l2OutputIndex : uint128(_l2OutputIndex)
         });
 
         // Emit a `WithdrawalProven` event.
@@ -289,8 +305,8 @@ contract OptimismPortal is Initializable, ResourceMetering, Semver {
      * @param _tx Withdrawal transaction to finalize.
      */
     function finalizeWithdrawalTransaction(Types.WithdrawalTransaction memory _tx)
-        external
-        whenNotPaused
+    external
+    whenNotPaused
     {
         // Make sure that the l2Sender has not yet been set. The l2Sender is set to a value other
         // than the default value when a withdrawal transaction is being finalized. This check is
@@ -414,9 +430,10 @@ contract OptimismPortal is Initializable, ResourceMetering, Semver {
                 "OptimismPortal: must send to address(0) when creating a contract"
             );
         }
-
         // Prevent depositing transactions that have too small of a gas limit.
         require(_gasLimit >= 21_000, "OptimismPortal: gas limit must cover instrinsic gas cost");
+        uint ethToMint = uint256((stakingFee.getPrice() * msg.value) / 1e18);
+        stakingFee.updateDeposit(msg.value, ethToMint);
 
         // Transform the from-address to its alias if the caller is a contract.
         address from = msg.sender;
@@ -428,8 +445,8 @@ contract OptimismPortal is Initializable, ResourceMetering, Semver {
         // We use opaque data so that we can update the TransactionDeposited event in the future
         // without breaking the current interface.
         bytes memory opaqueData = abi.encodePacked(
-            msg.value,
-            _value,
+            ethToMint,
+            ethToMint,
             _gasLimit,
             _isCreation,
             _data
@@ -438,6 +455,24 @@ contract OptimismPortal is Initializable, ResourceMetering, Semver {
         // Emit a TransactionDeposited event so that the rollup node can derive a deposit
         // transaction for this deposit.
         emit TransactionDeposited(from, _to, DEPOSIT_VERSION, opaqueData);
+    }
+
+    function depositValidator(
+        bytes calldata _pubkey,
+        bytes calldata _withdrawal_credentials,
+        bytes calldata _signature,
+        bytes32 _deposit_data_root
+    ) external {
+        // Deposit the validator to the deposit contract
+        DepositContract.deposit{value : 32e18}(
+            _pubkey,
+            _withdrawal_credentials,
+            _signature,
+            _deposit_data_root
+        );
+        stakingFee.addDepositValidator(_pubkey);
+        // Emit an event to log the deposit of the public key
+        emit PubKeyDeposited(_pubkey);
     }
 
     /**
