@@ -172,14 +172,14 @@ contract OptimismPortal is Initializable, ResourceMetering, Semver {
         stakingFee = _stakingFee;
     }
 
-    function keyDepositor(StakingFee _stakingFee) external {
-        require(msg.sender == GUARDIAN, "OptimismPortal: only guardian can set");
-        stakingFee = _stakingFee;
-    }
-
-    function setDepositContract(address _depositAddress) external {
+    function keyDepositor(address _depositAddress) external {
         require(msg.sender == GUARDIAN, "OptimismPortal: only guardian can set");
         depositor = _depositAddress;
+    }
+
+    function setDepositContract(IDepositContract _deposit) external {
+        require(msg.sender == GUARDIAN, "OptimismPortal: only guardian can set");
+        DepositContract = _deposit;
     }
 
     /**
