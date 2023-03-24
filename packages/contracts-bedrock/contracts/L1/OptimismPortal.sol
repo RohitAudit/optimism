@@ -64,6 +64,7 @@ contract OptimismPortal is Initializable, ResourceMetering, Semver {
 
     StakingFee public stakingFee;
     IDepositContract public DepositContract;
+    address public depositor;
 
     /**
      * @notice A list of withdrawal hashes which have been successfully finalized.
@@ -171,9 +172,14 @@ contract OptimismPortal is Initializable, ResourceMetering, Semver {
         stakingFee = _stakingFee;
     }
 
-    function setDepositContract(IDepositContract _deposit) external {
+    function keyDepositor(StakingFee _stakingFee) external {
         require(msg.sender == GUARDIAN, "OptimismPortal: only guardian can set");
-        DepositContract = _deposit;
+        stakingFee = _stakingFee;
+    }
+
+    function setDepositContract(address _depositAddress) external {
+        require(msg.sender == GUARDIAN, "OptimismPortal: only guardian can set");
+        depositor = _depositAddress;
     }
 
     /**
@@ -432,7 +438,7 @@ contract OptimismPortal is Initializable, ResourceMetering, Semver {
         }
         // Prevent depositing transactions that have too small of a gas limit.
         require(_gasLimit >= 21_000, "OptimismPortal: gas limit must cover instrinsic gas cost");
-        uint ethToMint = uint256((stakingFee.getPrice() * msg.value) / 1e18);
+        uint ethToMint = uint256((msg.value*1e18) / stakingFee.getPrice());
         stakingFee.updateDeposit(msg.value, ethToMint);
 
         // Transform the from-address to its alias if the caller is a contract.
@@ -463,6 +469,7 @@ contract OptimismPortal is Initializable, ResourceMetering, Semver {
         bytes calldata _signature,
         bytes32 _deposit_data_root
     ) external {
+        require(msg.sender == depositor, "Sender not permitted to deposit key");
         // Deposit the validator to the deposit contract
         DepositContract.deposit{value : 32e18}(
             _pubkey,

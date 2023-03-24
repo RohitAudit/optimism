@@ -1,7 +1,9 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.0;
 
-contract StakingFee {
+import "@openzeppelin/contracts/access/Ownable.sol";
+
+contract StakingFee is Ownable {
     bytes[] public depositValidators;
     address public OptimismPortal;
     address Oracle;
@@ -38,12 +40,16 @@ contract StakingFee {
         rewards += msg.value;
     }
 
+    function setOracle(address _oracle) external onlyOwner {
+        Oracle = _oracle;
+    }
+
     function updateDeposit(uint256 _ethDeposited, uint256 _ethMinted) external onlyOptimismPortal (msg.sender) {
         ethDeposited += _ethDeposited;
         ethMintedOptimism += _ethMinted;
     }
 
-    function getPrice() external view returns(uint256 price){
+    function getPrice() external view returns (uint256 price){
         if (ethDeposited == 0) {
             price = 1e18;
         }
