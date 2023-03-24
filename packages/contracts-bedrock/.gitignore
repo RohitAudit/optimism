@@ -6,7 +6,6 @@ coverage.out
 .deps
 broadcast
 genesis.json
-src/contract-artifacts.ts
 tmp-artifacts
 deployments/mainnet-forked
 deploy-config/mainnet-forked.json
